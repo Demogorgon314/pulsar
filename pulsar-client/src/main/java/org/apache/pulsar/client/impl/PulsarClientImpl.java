@@ -670,20 +670,28 @@ public class PulsarClientImpl implements PulsarClient {
         if (!state.compareAndSet(State.Open, State.Closing)) {
             return FutureUtil.failedFuture(new PulsarClientException.AlreadyClosedException("Client already closed"));
         }
-
+        log.error("PulsarClientImpl closeAsync() start");
         final CompletableFuture<Void> closeFuture = new CompletableFuture<>();
         List<CompletableFuture<Void>> futures = Lists.newArrayList();
 
-        producers.forEach(p -> futures.add(p.closeAsync()));
-        consumers.forEach(c -> futures.add(c.closeAsync()));
+        producers.forEach(p -> {
+            log.error("PulsarClientImpl closeAsync() producer {} : {}", p.topic, p);
+            futures.add(p.closeAsync());
+        });
+        consumers.forEach(c -> {
+            log.error("PulsarClientImpl closeAsync() consumer {} : {}", c.topic, c);
+            futures.add(c.closeAsync());
+        });
 
         // Need to run the shutdown sequence in a separate thread to prevent deadlocks
         // If there are consumers or producers that need to be shutdown we cannot use the same thread
         // to shutdown the EventLoopGroup as well as that would be trying to shutdown itself thus a deadlock
         // would happen
+        log.error("Before FutureUtil waitForAll()");
         FutureUtil.waitForAll(futures).thenRun(() -> new Thread(() -> {
             // All producers & consumers are now closed, we can stop the client safely
             try {
+                log.error("PulsarClientImpl shutdown()");
                 shutdown();
                 closeFuture.complete(null);
                 state.set(State.Closed);
