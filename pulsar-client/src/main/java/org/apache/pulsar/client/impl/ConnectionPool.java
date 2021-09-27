@@ -316,6 +316,7 @@ public class ConnectionPool implements Closeable {
     public void close() throws IOException {
         try {
             if (!eventLoopGroup.isShutdown()) {
+                log.error("eventLoopGroup:::{}", eventLoopGroup);
                 eventLoopGroup.shutdownGracefully(0, 10, TimeUnit.SECONDS).await();
             }
         } catch (InterruptedException e) {
