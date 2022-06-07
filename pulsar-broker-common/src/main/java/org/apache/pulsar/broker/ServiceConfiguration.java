@@ -2187,9 +2187,9 @@ public class ServiceConfiguration implements PulsarConfiguration {
     @FieldContext(
             category = CATEGORY_LOAD_BALANCER,
             dynamic = true,
-            doc = "Choose load data store implementation. " +
-                    "Available value: TableViewStore, MetaDataStore." +
-                    "Default value: TableViewStore"
+            doc = "Choose load data store implementation. "
+                    + "Available value: TableViewStore, MetaDataStore."
+                    + "Default value: TableViewStore"
     )
     private String loadDataStoreName = "TableViewStore";
 
