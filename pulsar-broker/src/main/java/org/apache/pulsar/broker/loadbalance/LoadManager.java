@@ -25,6 +25,8 @@ import java.util.concurrent.CompletableFuture;
 import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
+import org.apache.pulsar.broker.loadbalance.extensible.ExtensibleLoadManagerImpl;
+import org.apache.pulsar.broker.loadbalance.extensible.ExtensibleLoadManagerWrapper;
 import org.apache.pulsar.broker.loadbalance.impl.ModularLoadManagerWrapper;
 import org.apache.pulsar.broker.loadbalance.impl.SimpleLoadManagerImpl;
 import org.apache.pulsar.common.naming.ServiceUnitId;
@@ -140,6 +142,11 @@ public interface LoadManager {
                 return casted;
             } else if (loadManagerInstance instanceof ModularLoadManager) {
                 final LoadManager casted = new ModularLoadManagerWrapper((ModularLoadManager) loadManagerInstance);
+                casted.initialize(pulsar);
+                return casted;
+            } else if (loadManagerInstance instanceof ExtensibleLoadManagerImpl) {
+                final LoadManager casted =
+                        new ExtensibleLoadManagerWrapper((ExtensibleLoadManagerImpl) loadManagerInstance);
                 casted.initialize(pulsar);
                 return casted;
             }
