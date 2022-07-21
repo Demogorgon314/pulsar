@@ -217,4 +217,30 @@ public class TableViewTest extends MockedPulsarServiceBaseTest {
         assertEquals(tv1.size(), 1);
         assertEquals(tv.get("key2"), "value2");
     }
+
+    @Test(timeOut = 30 * 1000)
+    public void testNonPersistentTopic() throws Exception {
+        String topic = "non-persistent://public/default/test";
+        final TableView<String> tv = pulsarClient.newTableViewBuilder(Schema.STRING)
+                .topic(topic)
+                .autoUpdatePartitionsInterval(5, TimeUnit.SECONDS)
+                .create();
+
+        @Cleanup
+        Producer<String> producer = pulsarClient.newProducer(Schema.STRING).topic(topic).create();
+
+        producer.newMessage().key("key1").value("value1").send();
+
+        Awaitility.await().untilAsserted(() -> assertEquals(tv.get("key1"), "value1"));
+        assertEquals(tv.size(), 1);
+
+        // Try to remove key1 by publishing the tombstones message.
+        producer.newMessage().key("key1").value(null).send();
+        Awaitility.await().untilAsserted(() -> assertEquals(tv.size(), 0));
+
+        producer.newMessage().key("key2").value("value2").send();
+        Awaitility.await().untilAsserted(() -> assertEquals(tv.get("key2"), "value2"));
+        assertEquals(tv.size(), 1);
+
+    }
 }
