@@ -26,12 +26,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
@@ -47,8 +47,9 @@ public class TableViewImpl<T> implements TableView<T> {
 
     private final TableViewConfigurationData conf;
 
-    private final ConcurrentMap<String, T> data;
     private final Map<String, T> immutableData;
+
+    private final Cache<String, T> cache;
 
     private final CompletableFuture<Reader<T>> reader;
 
@@ -59,11 +60,15 @@ public class TableViewImpl<T> implements TableView<T> {
 
     TableViewImpl(PulsarClientImpl client, Schema<T> schema, TableViewConfigurationData conf) {
         this.conf = conf;
-        this.data = new ConcurrentHashMap<>();
-        this.immutableData = Collections.unmodifiableMap(data);
+        Caffeine<Object, Object> caffeineBuilder = Caffeine.newBuilder();
+        this.isNonPersistentTopic = conf.getTopicName().startsWith(TopicDomain.non_persistent.toString());
+        if (isNonPersistentTopic && conf.getTtl() > 0) {
+            caffeineBuilder.expireAfterWrite(conf.getTtl(), TimeUnit.NANOSECONDS);
+        }
+        cache = caffeineBuilder.build();
+        this.immutableData = Collections.unmodifiableMap(cache.asMap());
         this.listeners = new ArrayList<>();
         this.listenersMutex = new ReentrantLock();
-        this.isNonPersistentTopic = conf.getTopicName().startsWith(TopicDomain.non_persistent.toString());
         if (isNonPersistentTopic) {
             this.reader = client.newReader(schema)
                     .topic(conf.getTopicName())
@@ -92,22 +97,22 @@ public class TableViewImpl<T> implements TableView<T> {
 
     @Override
     public int size() {
-        return data.size();
+        return cache.asMap().size();
     }
 
     @Override
     public boolean isEmpty() {
-        return data.isEmpty();
+        return cache.asMap().isEmpty();
     }
 
     @Override
     public boolean containsKey(String key) {
-        return data.containsKey(key);
+        return cache.asMap().containsKey(key);
     }
 
     @Override
     public T get(String key) {
-       return data.get(key);
+       return cache.asMap().get(key);
     }
 
     @Override
@@ -127,7 +132,7 @@ public class TableViewImpl<T> implements TableView<T> {
 
     @Override
     public void forEach(BiConsumer<String, T> action) {
-        data.forEach(action);
+        cache.asMap().forEach(action);
     }
 
     @Override
@@ -172,9 +177,9 @@ public class TableViewImpl<T> implements TableView<T> {
                 try {
                     listenersMutex.lock();
                     if (null == msg.getValue()){
-                        data.remove(msg.getKey());
+                        cache.invalidate(msg.getKey());
                     } else {
-                        data.put(msg.getKey(), msg.getValue());
+                        cache.put(msg.getKey(), msg.getValue());
                     }
 
                     for (BiConsumer<String, T> listener : listeners) {
