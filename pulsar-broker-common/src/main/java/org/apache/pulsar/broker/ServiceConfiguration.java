@@ -2128,6 +2128,14 @@ public class ServiceConfiguration implements PulsarConfiguration {
         doc = "Enable/disable automatic bundle unloading for load-shedding"
     )
     private boolean loadBalancerSheddingEnabled = true;
+
+    @FieldContext(
+            dynamic = true,
+            category = CATEGORY_LOAD_BALANCER,
+            doc = "Enable/disable the bundle transfer option for load-shedding"
+    )
+    private boolean loadBalancerSheddingTransferEnabled = true;
+
     @FieldContext(
         category = CATEGORY_LOAD_BALANCER,
         dynamic = true,
@@ -2177,6 +2185,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
             doc = "Usage threshold to determine a broker whether to start threshold shedder"
     )
     private int loadBalancerBrokerThresholdShedderPercentage = 10;
+
+    @FieldContext(
+            dynamic = true,
+            category = CATEGORY_LOAD_BALANCER,
+            doc = "Usage threshold to determine a broker whether to start min-max-transfer shedder"
+    )
+    private int loadBalancerBrokerMinMaxTransferShedderThreshold = 10;
 
     @FieldContext(
             dynamic = true,
