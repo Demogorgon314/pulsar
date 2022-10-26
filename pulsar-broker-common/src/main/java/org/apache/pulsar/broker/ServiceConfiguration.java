@@ -2160,6 +2160,14 @@ public class ServiceConfiguration implements PulsarConfiguration {
         doc = "Enable/disable automatic bundle unloading for load-shedding"
     )
     private boolean loadBalancerSheddingEnabled = true;
+
+    @FieldContext(
+            dynamic = true,
+            category = CATEGORY_LOAD_BALANCER,
+            doc = "Enable/disable the bundle transfer option for load-shedding"
+    )
+    private boolean loadBalancerSheddingTransferEnabled = true;
+
     @FieldContext(
         category = CATEGORY_LOAD_BALANCER,
         dynamic = true,
@@ -2167,7 +2175,6 @@ public class ServiceConfiguration implements PulsarConfiguration {
             + " should be offload from some over-loaded broker to other under-loaded brokers"
     )
     private int loadBalancerSheddingIntervalMinutes = 1;
-
     @FieldContext(
             dynamic = true,
             category = CATEGORY_LOAD_BALANCER,
@@ -2209,6 +2216,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
             doc = "Usage threshold to determine a broker whether to start threshold shedder"
     )
     private int loadBalancerBrokerThresholdShedderPercentage = 10;
+
+    @FieldContext(
+            dynamic = true,
+            category = CATEGORY_LOAD_BALANCER,
+            doc = "Usage threshold to determine a broker whether to start min-max-transfer shedder"
+    )
+    private double loadBalancerBrokerMinMaxTransferShedderThreshold = 0.1;
 
     @FieldContext(
             dynamic = true,
@@ -2417,6 +2431,15 @@ public class ServiceConfiguration implements PulsarConfiguration {
         doc = "Time to wait for the unloading of a namespace bundle"
     )
     private long namespaceBundleUnloadingTimeoutMs = 60000;
+
+    @FieldContext(
+            category = CATEGORY_LOAD_BALANCER,
+            dynamic = true,
+            doc = "Choose load data store implementation. "
+                    + "Available value: TableViewStore."
+                    + "Default value: TableViewStore"
+    )
+    private String loadDataStoreName = "TableViewStore";
 
     /**** --- Replication. --- ****/
     @FieldContext(
