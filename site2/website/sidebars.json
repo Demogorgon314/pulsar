@@ -102,7 +102,8 @@
                 "functions-deploy-cluster-resource",
                 "functions-deploy-cluster-parallelism",
                 "functions-deploy-cluster-encryption",
-                "functions-deploy-cluster-package"
+                "functions-deploy-cluster-package",
+                "functions-deploy-cluster-builtin"
               ]
             },
             "functions-deploy-trigger"
@@ -209,22 +210,26 @@
     },
     {
       "type": "category",
-      "label": "Kubernetes (Helm)",
-      "items": [
-        "helm-overview",
-        "helm-prepare",
-        "helm-install",
-        "helm-deploy",
-        "helm-upgrade",
-        "helm-tools"
-      ]
-    },
-    {
-      "type": "category",
       "label": "Deployment",
+      "link": {
+        "type": "doc",
+        "id": "install-deploy-upgrade-landing"
+      },
       "items": [
         "deploy-aws",
-        "deploy-kubernetes",
+        {
+          "type": "category",
+          "label": "Kubernetes",
+          "link": {
+            "type": "doc",
+            "id": "deploy-kubernetes"
+          },
+          "items": [
+            "helm-prepare",
+            "helm-deploy",
+            "helm-upgrade"
+          ]
+        },
         "deploy-bare-metal",
         "deploy-bare-metal-multi-cluster",
         "deploy-docker",
@@ -366,6 +371,10 @@
     {
       "type": "category",
       "label": "Reference",
+      "link": {
+        "type": "doc",
+        "id": "reference-landing"
+      },
       "items": [
         "reference-terminology",
         "reference-cli-tools",
