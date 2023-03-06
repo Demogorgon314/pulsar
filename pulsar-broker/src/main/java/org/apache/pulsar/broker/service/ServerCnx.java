@@ -388,7 +388,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         if (state != State.Failed) {
             // No need to report stack trace for known exceptions that happen in disconnections
             log.warn("[{}] Got exception {}", remoteAddress,
-                    ClientCnx.isKnownException(cause) ? cause : ExceptionUtils.getStackTrace(cause));
+                    ClientCnx.isKnownException(cause) ? cause.toString() : ExceptionUtils.getStackTrace(cause));
             state = State.Failed;
             if (log.isDebugEnabled()) {
                 log.debug("[{}] connect state change to : [{}]", remoteAddress, State.Failed.name());
@@ -397,7 +397,8 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             // At default info level, suppress all subsequent exceptions that are thrown when the connection has already
             // failed
             if (log.isDebugEnabled()) {
-                log.debug("[{}] Got exception: {}", remoteAddress, cause);
+                log.debug("[{}] Got exception {}", remoteAddress,
+                        ClientCnx.isKnownException(cause) ? cause.toString() : ExceptionUtils.getStackTrace(cause));
             }
         }
         ctx.close();
@@ -673,7 +674,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         if (service.isAuthenticationEnabled()) {
             if (service.isAuthorizationEnabled()) {
                 if (!service.getAuthorizationService()
-                    .isValidOriginalPrincipal(authRole, originalPrincipal, remoteAddress)) {
+                    .isValidOriginalPrincipal(authRole, originalPrincipal, remoteAddress, false)) {
                     state = State.Failed;
                     service.getPulsarStats().recordConnectionCreateFail();
                     final ByteBuf msg = Commands.newError(-1, ServerError.AuthorizationError, "Invalid roles.");
@@ -690,7 +691,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             log.debug("[{}] connect state change to : [{}]", remoteAddress, State.Connected.name());
         }
         setRemoteEndpointProtocolVersion(clientProtoVersion);
-        if (isNotBlank(clientVersion) && !clientVersion.contains(" ") /* ignore default version: pulsar client */) {
+        if (isNotBlank(clientVersion)) {
             this.clientVersion = clientVersion.intern();
         }
         if (brokerInterceptor != null) {
@@ -737,31 +738,32 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 // 2. an authentication refresh, in which case we need to refresh authenticationData
                 AuthenticationState authState = useOriginalAuthState ? originalAuthState : this.authState;
                 String newAuthRole = authState.getAuthRole();
-
-                // Refresh the auth data.
-                this.authenticationData = authState.getAuthDataSource();
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Auth data refreshed for role={}", remoteAddress, this.authRole);
-                }
-
-                if (!useOriginalAuthState) {
-                    this.authRole = newAuthRole;
-                }
-
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] Client successfully authenticated with {} role {} and originalPrincipal {}",
-                            remoteAddress, authMethod, this.authRole, originalPrincipal);
-                }
+                AuthenticationDataSource newAuthDataSource = authState.getAuthDataSource();
 
                 if (state != State.Connected) {
+                    // Set the auth data and auth role
+                    if (!useOriginalAuthState) {
+                        this.authRole = newAuthRole;
+                        this.authenticationData = newAuthDataSource;
+                    }
                     // First time authentication is done
                     if (originalAuthState != null) {
                         // We only set originalAuthState when we are going to use it.
                         authenticateOriginalData(clientProtocolVersion, clientVersion);
                     } else {
                         completeConnect(clientProtocolVersion, clientVersion);
+                        if (log.isDebugEnabled()) {
+                            log.debug("[{}] Client successfully authenticated with {} role {} and originalPrincipal {}",
+                                    remoteAddress, authMethod, this.authRole, originalPrincipal);
+                        }
                     }
                 } else {
+                    // Refresh the auth data
+                    if (!useOriginalAuthState) {
+                        this.authenticationData = newAuthDataSource;
+                    } else {
+                        this.originalAuthData = newAuthDataSource;
+                    }
                     // If the connection was already ready, it means we're doing a refresh
                     if (!StringUtils.isEmpty(authRole)) {
                         if (!authRole.equals(newAuthRole)) {
@@ -2437,10 +2439,11 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         final TxnID txnID = new TxnID(command.getTxnidMostBits(), command.getTxnidLeastBits());
         final TransactionCoordinatorID tcId = TransactionCoordinatorID.get(command.getTxnidMostBits());
         final long requestId = command.getRequestId();
+        final List<String> partitionsList = command.getPartitionsList();
         if (log.isDebugEnabled()) {
-            command.getPartitionsList().forEach(partion ->
+            partitionsList.forEach(partition ->
                     log.debug("Receive add published partition to txn request {} "
-                            + "from {} with txnId {}, topic: [{}]", requestId, remoteAddress, txnID, partion));
+                            + "from {} with txnId {}, topic: [{}]", requestId, remoteAddress, txnID, partition));
         }
 
         if (!checkTransactionEnableAndSendError(requestId)) {
@@ -2455,7 +2458,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                         return failedFutureTxnNotOwned(txnID);
                     }
                     return transactionMetadataStoreService
-                            .addProducedPartitionToTxn(txnID, command.getPartitionsList());
+                            .addProducedPartitionToTxn(txnID, partitionsList);
                 })
                 .whenComplete((v, ex) -> {
                     if (ex == null) {
