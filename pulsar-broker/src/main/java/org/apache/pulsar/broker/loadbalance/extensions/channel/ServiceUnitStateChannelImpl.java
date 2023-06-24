@@ -478,7 +478,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
         return isOwner(serviceUnit, lookupServiceAddress);
     }
 
-    public CompletableFuture<Optional<String>> getOwnerAsync(String serviceUnit) {
+    public synchronized CompletableFuture<Optional<String>> getOwnerAsync(String serviceUnit) {
         if (!validateChannelState(Started, true)) {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("Invalid channel state:" + channelState.name()));
@@ -608,9 +608,9 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
         }).thenApply(__ -> null);
     }
 
-    private void handle(String serviceUnit, ServiceUnitStateData data) {
+    private synchronized void handle(String serviceUnit, ServiceUnitStateData data) {
         long totalHandledRequests = getHandlerTotalCounter(data).incrementAndGet();
-        if (log.isDebugEnabled()) {
+        if (debug()) {
             log.info("{} received a handle request for serviceUnit:{}, data:{}. totalHandledRequests:{}",
                     lookupServiceAddress, serviceUnit, data, totalHandledRequests);
         }
