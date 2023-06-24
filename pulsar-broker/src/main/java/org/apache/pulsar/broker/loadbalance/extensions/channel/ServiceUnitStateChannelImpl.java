@@ -320,7 +320,9 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
                             "topicCompactionStrategyClassName",
                             ServiceUnitStateCompactionStrategy.class.getName()))
                     .create();
-            tableview.listen((key, value) -> handle(key, value));
+            tableview.listen((key, value) -> {
+                pulsar.getOrderedExecutor().chooseThread(key).execute(() -> handle(key, value));
+            });
             if (debug) {
                 log.info("Successfully started the channel tableview.");
             }
@@ -696,9 +698,11 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     private void handleOwnEvent(String serviceUnit, ServiceUnitStateData data) {
-        var getOwnerRequest = getOwnerRequests.remove(serviceUnit);
-        if (getOwnerRequest != null) {
-            getOwnerRequest.complete(data.dstBroker());
+        synchronized (this) {
+            var getOwnerRequest = getOwnerRequests.remove(serviceUnit);
+            if (getOwnerRequest != null) {
+                getOwnerRequest.complete(data.dstBroker());
+            }
         }
         stateChangeListeners.notify(serviceUnit, data, null);
         if (isTargetBroker(data.dstBroker())) {
@@ -804,7 +808,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
         return broker.equals(lookupServiceAddress);
     }
 
-    private CompletableFuture<String> deferGetOwnerRequest(String serviceUnit) {
+    private synchronized CompletableFuture<String> deferGetOwnerRequest(String serviceUnit) {
         return getOwnerRequests
                 .computeIfAbsent(serviceUnit, k -> {
                     CompletableFuture<String> future = new CompletableFuture<>();
