@@ -385,7 +385,7 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
 
     private CompletableFuture<String> getOwnerAsync(
             ServiceUnitId serviceUnit, String bundle, boolean ownByLocalBrokerIfAbsent) {
-        return serviceUnitStateChannel.getOwnerAsync(bundle).thenCompose(broker -> {
+        return serviceUnitStateChannel.getOwnerAsync(bundle).thenComposeAsync(broker -> {
             // If the bundle not assign yet, select and publish assign event to channel.
             if (broker.isEmpty()) {
                 CompletableFuture<Optional<String>> selectedBroker;
