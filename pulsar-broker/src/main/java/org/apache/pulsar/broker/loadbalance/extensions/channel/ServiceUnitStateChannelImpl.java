@@ -531,6 +531,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     public CompletableFuture<String> publishAssignEventAsync(String serviceUnit, String broker) {
+        log.info("DEBUG: publishAssignEventAsync: {} - {}", serviceUnit, broker);
         if (!validateChannelState(Started, true)) {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("Invalid channel state:" + channelState.name()));
@@ -538,9 +539,11 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
         EventType eventType = Assign;
         eventCounters.get(eventType).getTotal().incrementAndGet();
         CompletableFuture<String> getOwnerRequest = deferGetOwnerRequest(serviceUnit);
-
+        log.info("DEBUG: publishAssignEventAsync: before pubAsync {} - {}", serviceUnit, broker);
         pubAsync(serviceUnit, new ServiceUnitStateData(Assigning, broker, getNextVersionId(serviceUnit)))
                 .whenComplete((__, ex) -> {
+                    log.info("DEBUG: publishAssignEventAsync: pubAsync completed {} - {}, [{}]",
+                            serviceUnit, broker, ex);
                     if (ex != null) {
                         getOwnerRequests.remove(serviceUnit, getOwnerRequest);
                         if (!getOwnerRequest.isCompletedExceptionally()) {
@@ -549,6 +552,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
                         eventCounters.get(eventType).getFailure().incrementAndGet();
                     }
                 });
+        log.info("DEBUG: publishAssignEventAsync: after pubAsync {} - {}", serviceUnit, broker);
         return getOwnerRequest;
     }
 

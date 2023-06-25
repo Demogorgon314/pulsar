@@ -149,7 +149,7 @@ public class ExtensibleLoadManagerTest extends TestRetrySupport {
 
     @Test(timeOut = 40 * 1000)
     public void testConcurrentLookups() throws Exception {
-        String topicName = "persistent://" + DEFAULT_NAMESPACE + "/testConcurrentLookups";
+        String topicName = "persistent://" + DEFAULT_NAMESPACE + "/testConcurrentLookups" + UUID.randomUUID();
         List<PulsarAdmin> admins = new ArrayList<>();
         int numAdminForBroker = 10;
         for (String url : brokerUrls) {
