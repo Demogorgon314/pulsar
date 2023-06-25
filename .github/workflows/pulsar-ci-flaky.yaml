@@ -74,9 +74,9 @@ jobs:
       - name: Check if coverage should be collected
         id: check_coverage
         run: |
-          echo "collect_coverage=${{ 
-          (steps.check_changes.outputs.docs_only != 'true' && github.event_name != 'workflow_dispatch' 
-            && (github.base_ref == 'master' || github.ref_name == 'master')) 
+          echo "collect_coverage=${{
+          (steps.check_changes.outputs.docs_only != 'true' && github.event_name != 'workflow_dispatch'
+            && (github.base_ref == 'master' || github.ref_name == 'master'))
           || (github.event_name == 'workflow_dispatch' && github.event.inputs.collect_coverage == 'true')
           }}"  >> $GITHUB_OUTPUT
 
@@ -149,7 +149,7 @@ jobs:
       - name: Create Jacoco reports
         if: ${{ needs.preconditions.outputs.collect_coverage == 'true' }}
         run: |
-          $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh create_test_coverage_report 
+          $GITHUB_WORKSPACE/build/pulsar_ci_tool.sh create_test_coverage_report
           cd $GITHUB_WORKSPACE/target
           zip -qr jacoco_test_coverage_report_flaky.zip jacoco_test_coverage_report || true
 
