@@ -198,6 +198,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     public ServiceUnitStateChannelImpl(PulsarService pulsar) {
+        log.info("XXXXXXXXXXXXXXX DEBUG: ServiceUnitStateChannelImpl constructor called");
         this.pulsar = pulsar;
         this.config = pulsar.getConfig();
         this.lookupServiceAddress = pulsar.getLookupServiceAddress();
