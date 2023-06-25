@@ -482,43 +482,50 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     public CompletableFuture<Optional<String>> getOwnerAsync(String serviceUnit) {
-        if (!validateChannelState(Started, true)) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("Invalid channel state:" + channelState.name()));
-        }
-
-        ServiceUnitStateData data = tableview.get(serviceUnit);
-        ServiceUnitState state = state(data);
-        ownerLookUpCounters.get(state).getTotal().incrementAndGet();
-        switch (state) {
-            case Owned -> {
-                return CompletableFuture.completedFuture(Optional.of(data.dstBroker()));
+        CompletableFuture<Optional<String>> future = new CompletableFuture<>();
+        pulsar.getOrderedExecutor().chooseThread(serviceUnit).execute(() -> {
+            if (!validateChannelState(Started, true)) {
+                future.completeExceptionally(
+                        new IllegalStateException("Invalid channel state:" + channelState.name()));
             }
-            case Splitting -> {
-                return CompletableFuture.completedFuture(Optional.of(data.sourceBroker()));
+            ServiceUnitStateData data = tableview.get(serviceUnit);
+            ServiceUnitState state = state(data);
+            ownerLookUpCounters.get(state).getTotal().incrementAndGet();
+            switch (state) {
+                case Owned -> {
+                    future.complete(Optional.of(data.dstBroker()));
+                }
+                case Splitting -> {
+                    future.complete(Optional.of(data.sourceBroker()));
+                }
+                case Assigning, Releasing -> {
+                    deferGetOwnerRequest(serviceUnit)
+                            .thenApply(
+                                    broker -> broker == null
+                                            ? future.complete(Optional.empty())
+                                            : future.complete(Optional.of(broker)))
+                            .exceptionally(e -> {
+                                ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                                return null;
+                            });
+                }
+                case Init, Free -> {
+                    future.complete(Optional.empty());
+                }
+                case Deleted -> {
+                    ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                    future.completeExceptionally(new IllegalArgumentException(serviceUnit + " is deleted."));
+                }
+                default -> {
+                    ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                    String errorMsg =
+                            String.format("Failed to process service unit state data: %s when get owner.", data);
+                    log.error(errorMsg);
+                    future.completeExceptionally(new IllegalStateException(errorMsg));
+                }
             }
-            case Assigning, Releasing -> {
-                return deferGetOwnerRequest(serviceUnit).whenComplete((__, e) -> {
-                    if (e != null) {
-                        ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                    }
-                }).thenApply(
-                        broker -> broker == null ? Optional.empty() : Optional.of(broker));
-            }
-            case Init, Free -> {
-                return CompletableFuture.completedFuture(Optional.empty());
-            }
-            case Deleted -> {
-                ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                return CompletableFuture.failedFuture(new IllegalArgumentException(serviceUnit + " is deleted."));
-            }
-            default -> {
-                ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                String errorMsg = String.format("Failed to process service unit state data: %s when get owner.", data);
-                log.error(errorMsg);
-                return CompletableFuture.failedFuture(new IllegalStateException(errorMsg));
-            }
-        }
+        });
+        return future;
     }
 
     private long getNextVersionId(String serviceUnit) {
