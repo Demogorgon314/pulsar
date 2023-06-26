@@ -720,13 +720,15 @@ public abstract class PulsarWebResource {
                     }
                     // If the load manager is extensible load manager, and is transfer operation,
                     // we don't need check the authoritative.
-                    MultivaluedMap<String, String> queryParameters = uri.getQueryParameters();
-                    if (queryParameters != null && !queryParameters.isEmpty()
-                            && ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(config())) {
-                        List<String> destinationBroker = uri.getQueryParameters().get("destinationBroker");
-                        if (destinationBroker != null && !destinationBroker.isEmpty()) {
-                            // If the request is already redirected, we don't need check the authoritative.
-                            return CompletableFuture.completedFuture(null);
+                    if (uri != null) {
+                        MultivaluedMap<String, String> queryParameters = uri.getQueryParameters();
+                        if (queryParameters != null && !queryParameters.isEmpty()
+                                && ExtensibleLoadManagerImpl.isLoadManagerExtensionEnabled(config())) {
+                            List<String> destinationBroker = uri.getQueryParameters().get("destinationBroker");
+                            if (destinationBroker != null && !destinationBroker.isEmpty()) {
+                                // If the request is already redirected, we don't need check the authoritative.
+                                return CompletableFuture.completedFuture(null);
+                            }
                         }
                     }
                     return nsService.isServiceUnitOwnedAsync(bundle)
