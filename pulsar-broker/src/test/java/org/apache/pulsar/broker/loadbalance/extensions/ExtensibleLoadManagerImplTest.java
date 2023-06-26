@@ -1025,6 +1025,7 @@ public class ExtensibleLoadManagerImplTest extends MockedPulsarServiceBaseTest {
         for (int i = 0; i < boundaries.size() - 1; i++) {
             String bundle = String.format("%s_%s", boundaries.get(i), boundaries.get(i + 1));
             List<String> topic = admin.topics().getListInBundle(namespace, bundle);
+            log.info("List in bundle: {}, topic: {}", bundle, topic);
             if (topic == null) {
                 continue;
             }

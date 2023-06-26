@@ -64,6 +64,7 @@ import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.bookkeeper.util.SafeRunnable;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.pulsar.PulsarClusterMetadataSetup;
@@ -198,6 +199,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     public ServiceUnitStateChannelImpl(PulsarService pulsar) {
+        log.info("XXXXXXXXXXXXXXX DEBUG: ServiceUnitStateChannelImpl constructor called");
         this.pulsar = pulsar;
         this.config = pulsar.getConfig();
         this.lookupServiceAddress = pulsar.getLookupServiceAddress();
@@ -320,7 +322,9 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
                             "topicCompactionStrategyClassName",
                             ServiceUnitStateCompactionStrategy.class.getName()))
                     .create();
-            tableview.listen((key, value) -> handle(key, value));
+            tableview.listen((key, value) -> {
+                pulsar.getOrderedExecutor().chooseThread(key).execute(() -> handle(key, value));
+            });
             if (debug) {
                 log.info("Successfully started the channel tableview.");
             }
@@ -479,43 +483,53 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     public CompletableFuture<Optional<String>> getOwnerAsync(String serviceUnit) {
-        if (!validateChannelState(Started, true)) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("Invalid channel state:" + channelState.name()));
-        }
-
-        ServiceUnitStateData data = tableview.get(serviceUnit);
-        ServiceUnitState state = state(data);
-        ownerLookUpCounters.get(state).getTotal().incrementAndGet();
-        switch (state) {
-            case Owned -> {
-                return CompletableFuture.completedFuture(Optional.of(data.dstBroker()));
-            }
-            case Splitting -> {
-                return CompletableFuture.completedFuture(Optional.of(data.sourceBroker()));
-            }
-            case Assigning, Releasing -> {
-                return deferGetOwnerRequest(serviceUnit).whenComplete((__, e) -> {
-                    if (e != null) {
-                        ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+        CompletableFuture<Optional<String>> future = new CompletableFuture<>();
+        pulsar.getOrderedExecutor().chooseThread(serviceUnit).execute(new SafeRunnable() {
+            @Override
+            public void safeRun() {
+                if (!validateChannelState(Started, true)) {
+                    future.completeExceptionally(
+                            new IllegalStateException("Invalid channel state:" + channelState.name()));
+                }
+                ServiceUnitStateData data = tableview.get(serviceUnit);
+                ServiceUnitState state = state(data);
+                ownerLookUpCounters.get(state).getTotal().incrementAndGet();
+                switch (state) {
+                    case Owned -> {
+                        future.complete(Optional.of(data.dstBroker()));
                     }
-                }).thenApply(
-                        broker -> broker == null ? Optional.empty() : Optional.of(broker));
+                    case Splitting -> {
+                        future.complete(Optional.of(data.sourceBroker()));
+                    }
+                    case Assigning, Releasing -> {
+                        deferGetOwnerRequest(serviceUnit)
+                                .thenApply(
+                                        broker -> broker == null
+                                                ? future.complete(Optional.empty())
+                                                : future.complete(Optional.of(broker)))
+                                .exceptionally(e -> {
+                                    ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                                    return null;
+                                });
+                    }
+                    case Init, Free -> {
+                        future.complete(Optional.empty());
+                    }
+                    case Deleted -> {
+                        ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                        future.completeExceptionally(new IllegalArgumentException(serviceUnit + " is deleted."));
+                    }
+                    default -> {
+                        ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                        String errorMsg =
+                                String.format("Failed to process service unit state data: %s when get owner.", data);
+                        log.error(errorMsg);
+                        future.completeExceptionally(new IllegalStateException(errorMsg));
+                    }
+                }
             }
-            case Init, Free -> {
-                return CompletableFuture.completedFuture(Optional.empty());
-            }
-            case Deleted -> {
-                ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                return CompletableFuture.failedFuture(new IllegalArgumentException(serviceUnit + " is deleted."));
-            }
-            default -> {
-                ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                String errorMsg = String.format("Failed to process service unit state data: %s when get owner.", data);
-                log.error(errorMsg);
-                return CompletableFuture.failedFuture(new IllegalStateException(errorMsg));
-            }
-        }
+        });
+        return future;
     }
 
     private long getNextVersionId(String serviceUnit) {
@@ -528,6 +542,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
     }
 
     public CompletableFuture<String> publishAssignEventAsync(String serviceUnit, String broker) {
+        log.info("DEBUG: publishAssignEventAsync: {} - {}", serviceUnit, broker);
         if (!validateChannelState(Started, true)) {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("Invalid channel state:" + channelState.name()));
@@ -535,9 +550,11 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
         EventType eventType = Assign;
         eventCounters.get(eventType).getTotal().incrementAndGet();
         CompletableFuture<String> getOwnerRequest = deferGetOwnerRequest(serviceUnit);
-
+        log.info("DEBUG: publishAssignEventAsync: before pubAsync {} - {}", serviceUnit, broker);
         pubAsync(serviceUnit, new ServiceUnitStateData(Assigning, broker, getNextVersionId(serviceUnit)))
                 .whenComplete((__, ex) -> {
+                    log.info("DEBUG: publishAssignEventAsync: pubAsync completed {} - {}, [{}]",
+                            serviceUnit, broker, ex);
                     if (ex != null) {
                         getOwnerRequests.remove(serviceUnit, getOwnerRequest);
                         if (!getOwnerRequest.isCompletedExceptionally()) {
@@ -546,6 +563,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
                         eventCounters.get(eventType).getFailure().incrementAndGet();
                     }
                 });
+        log.info("DEBUG: publishAssignEventAsync: after pubAsync {} - {}", serviceUnit, broker);
         return getOwnerRequest;
     }
 
@@ -610,7 +628,7 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
 
     private void handle(String serviceUnit, ServiceUnitStateData data) {
         long totalHandledRequests = getHandlerTotalCounter(data).incrementAndGet();
-        if (log.isDebugEnabled()) {
+        if (debug()) {
             log.info("{} received a handle request for serviceUnit:{}, data:{}. totalHandledRequests:{}",
                     lookupServiceAddress, serviceUnit, data, totalHandledRequests);
         }

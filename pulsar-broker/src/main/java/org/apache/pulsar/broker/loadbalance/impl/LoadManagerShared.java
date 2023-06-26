@@ -334,11 +334,12 @@ public class LoadManagerShared {
         final String namespaceName = getNamespaceNameFromBundleName(assignedBundleName);
         try {
             final Map<String, Integer> brokerToAntiAffinityNamespaceCount = getAntiAffinityNamespaceOwnedBrokers(pulsar,
-                    namespaceName, brokerToNamespaceToBundleRange).get(30, TimeUnit.SECONDS);
+                    namespaceName, brokerToNamespaceToBundleRange)
+                    .get(pulsar.getConfiguration().getMetadataStoreOperationTimeoutSeconds(), TimeUnit.SECONDS);
             filterAntiAffinityGroupOwnedBrokers(pulsar, candidates, brokerToDomainMap,
                     brokerToAntiAffinityNamespaceCount);
         } catch (Exception e) {
-            LOG.error("Failed to filter anti-affinity group namespace {}", e.getMessage());
+            LOG.error("Failed to filter anti-affinity group namespace.", e);
         }
     }
 
@@ -400,11 +401,11 @@ public class LoadManagerShared {
         try {
             final Map<String, Integer> brokerToAntiAffinityNamespaceCount = getAntiAffinityNamespaceOwnedBrokers(
                     pulsar, namespaceName, bundleOwnershipData)
-                    .get(30, TimeUnit.SECONDS);
+                    .get(pulsar.getConfiguration().getMetadataStoreOperationTimeoutSeconds(), TimeUnit.SECONDS);
             filterAntiAffinityGroupOwnedBrokers(pulsar, candidates, brokerToDomainMap,
                     brokerToAntiAffinityNamespaceCount);
         } catch (Exception e) {
-            LOG.error("Failed to filter anti-affinity group namespace {}", e.getMessage());
+            LOG.error("Failed to filter anti-affinity group namespace.", e);
         }
     }
 
