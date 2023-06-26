@@ -64,6 +64,7 @@ import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.bookkeeper.util.SafeRunnable;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.pulsar.PulsarClusterMetadataSetup;
@@ -483,45 +484,48 @@ public class ServiceUnitStateChannelImpl implements ServiceUnitStateChannel {
 
     public CompletableFuture<Optional<String>> getOwnerAsync(String serviceUnit) {
         CompletableFuture<Optional<String>> future = new CompletableFuture<>();
-        pulsar.getOrderedExecutor().chooseThread(serviceUnit).execute(() -> {
-            if (!validateChannelState(Started, true)) {
-                future.completeExceptionally(
-                        new IllegalStateException("Invalid channel state:" + channelState.name()));
-            }
-            ServiceUnitStateData data = tableview.get(serviceUnit);
-            ServiceUnitState state = state(data);
-            ownerLookUpCounters.get(state).getTotal().incrementAndGet();
-            switch (state) {
-                case Owned -> {
-                    future.complete(Optional.of(data.dstBroker()));
+        pulsar.getOrderedExecutor().chooseThread(serviceUnit).execute(new SafeRunnable() {
+            @Override
+            public void safeRun() {
+                if (!validateChannelState(Started, true)) {
+                    future.completeExceptionally(
+                            new IllegalStateException("Invalid channel state:" + channelState.name()));
                 }
-                case Splitting -> {
-                    future.complete(Optional.of(data.sourceBroker()));
-                }
-                case Assigning, Releasing -> {
-                    deferGetOwnerRequest(serviceUnit)
-                            .thenApply(
-                                    broker -> broker == null
-                                            ? future.complete(Optional.empty())
-                                            : future.complete(Optional.of(broker)))
-                            .exceptionally(e -> {
-                                ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                                return null;
-                            });
-                }
-                case Init, Free -> {
-                    future.complete(Optional.empty());
-                }
-                case Deleted -> {
-                    ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                    future.completeExceptionally(new IllegalArgumentException(serviceUnit + " is deleted."));
-                }
-                default -> {
-                    ownerLookUpCounters.get(state).getFailure().incrementAndGet();
-                    String errorMsg =
-                            String.format("Failed to process service unit state data: %s when get owner.", data);
-                    log.error(errorMsg);
-                    future.completeExceptionally(new IllegalStateException(errorMsg));
+                ServiceUnitStateData data = tableview.get(serviceUnit);
+                ServiceUnitState state = state(data);
+                ownerLookUpCounters.get(state).getTotal().incrementAndGet();
+                switch (state) {
+                    case Owned -> {
+                        future.complete(Optional.of(data.dstBroker()));
+                    }
+                    case Splitting -> {
+                        future.complete(Optional.of(data.sourceBroker()));
+                    }
+                    case Assigning, Releasing -> {
+                        deferGetOwnerRequest(serviceUnit)
+                                .thenApply(
+                                        broker -> broker == null
+                                                ? future.complete(Optional.empty())
+                                                : future.complete(Optional.of(broker)))
+                                .exceptionally(e -> {
+                                    ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                                    return null;
+                                });
+                    }
+                    case Init, Free -> {
+                        future.complete(Optional.empty());
+                    }
+                    case Deleted -> {
+                        ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                        future.completeExceptionally(new IllegalArgumentException(serviceUnit + " is deleted."));
+                    }
+                    default -> {
+                        ownerLookUpCounters.get(state).getFailure().incrementAndGet();
+                        String errorMsg =
+                                String.format("Failed to process service unit state data: %s when get owner.", data);
+                        log.error(errorMsg);
+                        future.completeExceptionally(new IllegalStateException(errorMsg));
+                    }
                 }
             }
         });

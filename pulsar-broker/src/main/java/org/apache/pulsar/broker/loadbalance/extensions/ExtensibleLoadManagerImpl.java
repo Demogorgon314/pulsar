@@ -508,7 +508,7 @@ public class ExtensibleLoadManagerImpl implements ExtensibleLoadManager {
 
                     return CompletableFuture.completedFuture(
                             getBrokerSelectionStrategy().select(candidateBrokers, bundle, context));
-                });
+                }, pulsar.getOrderedExecutor().chooseThread(bundle.toString()));
     }
 
     @Override
