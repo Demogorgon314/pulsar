@@ -16,27 +16,25 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.tests.integration.io.sinks;
+package org.apache.pulsar.common.naming;
 
-import java.util.Optional;
-import org.testcontainers.elasticsearch.ElasticsearchContainer;
+import com.google.common.hash.Hashing;
+import java.nio.charset.StandardCharsets;
+import org.apache.pulsar.broker.PulsarService;
 
-public class ElasticSearch8SinkTester extends ElasticSearchSinkTester {
-
-    public static final String ELASTICSEARCH_8 = Optional.ofNullable(System.getenv("ELASTICSEARCH_IMAGE_V8"))
-            .orElse("docker.elastic.co/elasticsearch/elasticsearch:8.5.3");
-
-
-    public ElasticSearch8SinkTester(boolean schemaEnable) {
-        super(schemaEnable);
+public class ConsistentHashingTopicBundleAssigner implements TopicBundleAssignmentStrategy {
+    @Override
+    public NamespaceBundle findBundle(TopicName topicName, NamespaceBundles namespaceBundles) {
+        long hashCode = Hashing.crc32().hashString(topicName.toString(), StandardCharsets.UTF_8).padToLong();
+        NamespaceBundle bundle = namespaceBundles.getBundle(hashCode);
+        if (topicName.getDomain().equals(TopicDomain.non_persistent)) {
+            bundle.setHasNonPersistentTopic(true);
+        }
+        return bundle;
     }
 
     @Override
-    protected ElasticsearchContainer createElasticContainer() {
-        return new ElasticsearchContainer(ELASTICSEARCH_8)
-                .withEnv("ES_JAVA_OPTS", "-Xms128m -Xmx256m")
-                .withEnv("xpack.security.enabled", "false")
-                .withEnv("xpack.security.http.ssl.enabled", "false");
+    public void init(PulsarService pulsarService) {
     }
 
 }

@@ -16,26 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.tests.integration.io.sinks;
+package org.apache.pulsar.common.naming;
 
-import java.util.Optional;
-import org.testcontainers.elasticsearch.ElasticsearchContainer;
+import org.apache.pulsar.broker.PulsarService;
 
-public class ElasticSearch7SinkTester extends ElasticSearchSinkTester {
+public interface TopicBundleAssignmentStrategy {
+    NamespaceBundle findBundle(TopicName topicName,  NamespaceBundles namespaceBundles);
 
-    public static final String ELASTICSEARCH_7 = Optional.ofNullable(System.getenv("ELASTICSEARCH_IMAGE_V7"))
-            .orElse("docker.elastic.co/elasticsearch/elasticsearch:7.17.7");
-
-
-    public ElasticSearch7SinkTester(boolean schemaEnable) {
-        super(schemaEnable);
-    }
-
-
-    @Override
-    protected ElasticsearchContainer createElasticContainer() {
-        return new ElasticsearchContainer(ELASTICSEARCH_7)
-                .withEnv("ES_JAVA_OPTS", "-Xms128m -Xmx256m");
-    }
-
+    void init(PulsarService pulsarService);
 }
