@@ -38,6 +38,7 @@ import org.slf4j.LoggerFactory;
 
 public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(ManagedLedgerInterceptorImpl.class);
+    private static final String START_INDEX = "startIndex";
     private static final String INDEX = "index";
     private final Set<BrokerEntryMetadataInterceptor> brokerEntryMetadataInterceptors;
 
@@ -84,6 +85,21 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
         return index;
     }
 
+    public long getStartIndex() {
+        long startIndex = -1;
+
+        if (appendIndexMetadataInterceptor != null) {
+            return appendIndexMetadataInterceptor.getStartIndex();
+        }
+
+        return startIndex;
+    }
+
+    @Override
+    public boolean hasAppendIndexMetadataInterceptor() {
+        return appendIndexMetadataInterceptor != null;
+    }
+
     @Override
     public OpAddEntry beforeAddEntry(OpAddEntry op, int numberOfMessages) {
        if (op == null || numberOfMessages <= 0) {
@@ -91,6 +107,13 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
        }
         op.setData(Commands.addBrokerEntryMetadata(op.getData(), brokerEntryMetadataInterceptors, numberOfMessages));
         return op;
+    }
+
+    @Override
+    public void onTrimLedgers(long startIndex) {
+        if (appendIndexMetadataInterceptor != null) {
+            appendIndexMetadataInterceptor.setStartIndex(startIndex);
+        }
     }
 
     @Override
@@ -110,6 +133,12 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
             if (appendIndexMetadataInterceptor != null) {
                 appendIndexMetadataInterceptor.recoveryIndexGenerator(
                         Long.parseLong(propertiesMap.get(INDEX)));
+            }
+        }
+        if (propertiesMap.containsKey(START_INDEX)) {
+            if (appendIndexMetadataInterceptor != null) {
+                appendIndexMetadataInterceptor.setStartIndex(
+                        Long.parseLong(propertiesMap.get(START_INDEX)));
             }
         }
     }
@@ -157,6 +186,7 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
     @Override
     public void onUpdateManagedLedgerInfo(Map<String, String> propertiesMap) {
         if (appendIndexMetadataInterceptor != null) {
+            propertiesMap.put(START_INDEX, String.valueOf(appendIndexMetadataInterceptor.getStartIndex()));
             propertiesMap.put(INDEX, String.valueOf(appendIndexMetadataInterceptor.getIndex()));
         }
     }

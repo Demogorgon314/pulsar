@@ -2355,7 +2355,9 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
 
         // reopen ml
         ml = (ManagedLedgerImpl) factory.open("deletion_after_retention_test_ledger", config);
-        ml.internalTrimConsumedLedgers(CompletableFuture.completedFuture(null));
+        CompletableFuture<Void> promise = new CompletableFuture<>();
+        ml.internalTrimConsumedLedgers(promise);
+        promise.get();
 
         assertTrue(ml.getFirstPosition().ledgerId <= ml.lastConfirmedEntry.ledgerId);
         assertFalse(ml.getLedgersInfo().containsKey(ml.lastConfirmedEntry.ledgerId),

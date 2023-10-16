@@ -128,6 +128,7 @@ import org.apache.bookkeeper.mledger.util.CallbackMutex;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 import org.apache.pulsar.common.api.proto.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.common.policies.data.EnsemblePlacementPolicyConfig;
 import org.apache.pulsar.common.policies.data.ManagedLedgerInternalStats;
@@ -2752,8 +2753,6 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                 return;
             }
 
-            doDeleteLedgers(ledgersToDelete);
-
             for (LedgerInfo ls : offloadedLedgersToDelete) {
                 LedgerInfo.Builder newInfoBuilder = ls.toBuilder();
                 newInfoBuilder.getOffloadContextBuilder().setBookkeeperDeleted(true);
@@ -2769,38 +2768,91 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                 log.debug("[{}] Updating of ledgers list after trimming", name);
             }
 
-            store.asyncUpdateLedgerIds(name, getManagedLedgerInfo(), ledgersStat, new MetaStoreCallback<Void>() {
-                @Override
-                public void operationComplete(Void result, Stat stat) {
-                    log.info("[{}] End TrimConsumedLedgers. ledgers={} totalSize={}", name, ledgers.size(),
-                            TOTAL_SIZE_UPDATER.get(ManagedLedgerImpl.this));
-                    ledgersStat = stat;
-                    metadataMutex.unlock();
-                    trimmerMutex.unlock();
-
-                    for (LedgerInfo ls : ledgersToDelete) {
-                        log.info("[{}] Removing ledger {} - size: {}", name, ls.getLedgerId(), ls.getSize());
-                        asyncDeleteLedger(ls.getLedgerId(), ls);
-                    }
-                    for (LedgerInfo ls : offloadedLedgersToDelete) {
-                        log.info("[{}] Deleting offloaded ledger {} from bookkeeper - size: {}", name, ls.getLedgerId(),
-                                ls.getSize());
-                        asyncDeleteLedgerFromBookKeeper(ls.getLedgerId());
-                    }
-                    promise.complete(null);
+            this.onTrimLedgers(ledgersToDelete).whenComplete((res, ex) -> {
+                if (ex != null) {
+                    log.warn("[{}] Failed to read last entry of ledger while trimming", name, ex);
                 }
+                doDeleteLedgers(ledgersToDelete);
+                store.asyncUpdateLedgerIds(name, getManagedLedgerInfo(), ledgersStat, new MetaStoreCallback<>() {
+                    @Override
+                    public void operationComplete(Void result, Stat stat) {
+                        log.info("[{}] End TrimConsumedLedgers. ledgers={} totalSize={}", name, ledgers.size(),
+                                TOTAL_SIZE_UPDATER.get(ManagedLedgerImpl.this));
+                        ledgersStat = stat;
+                        metadataMutex.unlock();
+                        trimmerMutex.unlock();
 
-                @Override
-                public void operationFailed(MetaStoreException e) {
-                    log.warn("[{}] Failed to update the list of ledgers after trimming", name, e);
-                    metadataMutex.unlock();
-                    trimmerMutex.unlock();
-                    handleBadVersion(e);
+                        for (LedgerInfo ls : ledgersToDelete) {
+                            log.info("[{}] Removing ledger {} - size: {}", name, ls.getLedgerId(), ls.getSize());
+                            asyncDeleteLedger(ls.getLedgerId(), ls);
+                        }
+                        for (LedgerInfo ls : offloadedLedgersToDelete) {
+                            log.info("[{}] Deleting offloaded ledger {} from bookkeeper - size: {}",
+                                    name, ls.getLedgerId(), ls.getSize());
+                            asyncDeleteLedgerFromBookKeeper(ls.getLedgerId());
+                        }
+                        promise.complete(null);
+                    }
 
-                    promise.completeExceptionally(e);
-                }
+                    @Override
+                    public void operationFailed(MetaStoreException e) {
+                        log.warn("[{}] Failed to update the list of ledgers after trimming", name, e);
+                        metadataMutex.unlock();
+                        trimmerMutex.unlock();
+                        handleBadVersion(e);
+
+                        promise.completeExceptionally(e);
+                    }
+                });
             });
         }
+    }
+
+    private CompletableFuture<Void> onTrimLedgers(List<LedgerInfo> ledgersToDelete) {
+        CompletableFuture<Void> promise = new CompletableFuture<>();
+        if (!ledgersToDelete.isEmpty() && this.hasAppendIndexMetadataInterceptor()) {
+            LedgerInfo ledgerInfo = ledgersToDelete.get(ledgersToDelete.size() - 1);
+            asyncReadEntry(PositionImpl.get(ledgerInfo.getLedgerId(), ledgerInfo.getEntries() - 1),
+                    new ReadEntryCallback() {
+                        @Override
+                        public void readEntryComplete(Entry entry, Object ctx) {
+                            ByteBuf buf = entry.getDataBuffer();
+                            try {
+                                // might throw IllegalArgumentException
+                                final BrokerEntryMetadata brokerEntryMetadata =
+                                        Commands.peekBrokerEntryMetadataIfExist(buf);
+                                if (brokerEntryMetadata != null) {
+                                    long index = brokerEntryMetadata.getIndex();
+                                    if (managedLedgerInterceptor != null) {
+                                        managedLedgerInterceptor.onTrimLedgers(index + 1);
+                                    }
+                                }
+                            } catch (IllegalArgumentException | IllegalStateException e) {
+                                // This exception could be thrown by both peekBrokerEntryMetadataIfExist or null check
+                                // TODO: handle the exception?
+                                log.info("[{}] Failed to read brokerEntryMetadata while trimming", name, e);
+                            } finally {
+                                entry.release();
+                                promise.complete(null);
+                            }
+                        }
+
+                        @Override
+                        public void readEntryFailed(ManagedLedgerException exception, Object ctx) {
+                            log.warn("[{}] Failed to read last entry of ledger {} while trimming", name,
+                                    ledgerInfo.getLedgerId(), exception);
+                            promise.complete(null);
+                        }
+                    }, null);
+        } else {
+            promise.complete(null);
+        }
+        return promise;
+    }
+
+    private boolean hasAppendIndexMetadataInterceptor() {
+        return this.getManagedLedgerInterceptor() != null
+                && this.getManagedLedgerInterceptor().hasAppendIndexMetadataInterceptor();
     }
 
     /**

@@ -21,10 +21,13 @@ package org.apache.pulsar.common.intercept;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 
-public class AppendIndexMetadataInterceptor implements BrokerEntryMetadataInterceptor{
+public class AppendIndexMetadataInterceptor implements BrokerEntryMetadataInterceptor {
+
+    private final AtomicLong startIndex;
     private final AtomicLong indexGenerator;
 
     public AppendIndexMetadataInterceptor() {
+        this.startIndex = new AtomicLong(0);
         this.indexGenerator = new AtomicLong(-1);
     }
 
@@ -45,6 +48,14 @@ public class AppendIndexMetadataInterceptor implements BrokerEntryMetadataInterc
             BrokerEntryMetadata brokerMetadata,
             int numberOfMessages) {
         return brokerMetadata.setIndex(indexGenerator.addAndGet(numberOfMessages));
+    }
+
+    public void setStartIndex(long startIndex) {
+        this.startIndex.set(startIndex);
+    }
+
+    public long getStartIndex() {
+        return startIndex.get();
     }
 
     public long getIndex() {

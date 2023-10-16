@@ -20,8 +20,12 @@ package org.apache.pulsar.broker.intercept;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+
+import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import lombok.Cleanup;
 import org.apache.bookkeeper.mledger.AsyncCallbacks;
@@ -30,6 +34,7 @@ import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedger;
 import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
+import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerFactoryImpl;
@@ -43,6 +48,7 @@ import org.apache.pulsar.common.intercept.BrokerEntryMetadataInterceptor;
 import org.apache.pulsar.common.intercept.BrokerEntryMetadataUtils;
 import org.apache.pulsar.common.intercept.ManagedLedgerPayloadProcessor;
 import org.apache.pulsar.common.protocol.Commands;
+import org.awaitility.Awaitility;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +63,7 @@ import java.util.Set;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertTrue;
 
 @Test(groups = "broker")
 public class MangedLedgerInterceptorImplTest  extends MockedBookKeeperTestCase {
@@ -123,6 +130,7 @@ public class MangedLedgerInterceptorImplTest  extends MockedBookKeeperTestCase {
         }
 
         assertEquals(19, ((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex());
+        assertEquals(0, ((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex());
         List<Entry> entryList = cursor.readEntries(numberOfEntries);
         for (int i = 0 ; i < numberOfEntries; i ++) {
             BrokerEntryMetadata metadata =
@@ -135,6 +143,160 @@ public class MangedLedgerInterceptorImplTest  extends MockedBookKeeperTestCase {
         ledger.close();
         factory.shutdown();
     }
+
+    @Test
+    public void testAddBrokerEntryMetadataAndTrim() throws Exception {
+        final int MOCK_BATCH_SIZE = 2;
+        int numberOfEntries = 10;
+        // message size is 1MB
+        final int messageSize = 1048576;
+        char[] data = new char[messageSize];
+        Arrays.fill(data, 'a');
+        byte [] message = new String(data).getBytes(StandardCharsets.UTF_8);
+        final String ledgerAndCursorName = "testAddBrokerEntryMetadataAndTrim";
+
+        ManagedLedgerInterceptor interceptor = new ManagedLedgerInterceptorImpl(getBrokerEntryMetadataInterceptors(),null);
+
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setMaxEntriesPerLedger(2);
+        config.setRetentionSizeInMB(5);
+        config.setManagedLedgerInterceptor(interceptor);
+
+        ManagedLedger ledger = factory.open(ledgerAndCursorName, config);
+        ManagedCursorImpl cursor = (ManagedCursorImpl) ledger.openCursor(ledgerAndCursorName);
+
+        for ( int i = 0 ; i < numberOfEntries; i ++) {
+            ledger.addEntry(message, MOCK_BATCH_SIZE);
+        }
+
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex(), 0);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex(), 19);
+
+        List<Entry> entryList = cursor.readEntries(numberOfEntries);
+        for (int i = 0 ; i < numberOfEntries; i ++) {
+            BrokerEntryMetadata metadata =
+                    Commands.parseBrokerEntryMetadataIfExist(entryList.get(i).getDataBuffer());
+            assertNotNull(metadata);
+            assertEquals(metadata.getIndex(), (i + 1) * MOCK_BATCH_SIZE - 1);
+        }
+
+        // Trim ledgers.
+        cursor.markDelete(entryList.get(numberOfEntries - 1).getPosition());
+        CompletableFuture<Void> promise = new CompletableFuture<>();
+        ledger.trimConsumedLedgersInBackground(promise);
+        promise.get();
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex(), 16);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex(), 19);
+
+        cursor.close();
+        ledger.close();
+
+        // Re-open ledger
+        ledger = factory.open(ledgerAndCursorName, config);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex(), 16);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex(), 19);
+
+        cursor.close();
+        ledger.close();
+        factory.shutdown();
+    }
+
+    @Test(timeOut = 20000)
+    public void testTrimmer() throws Exception {
+        ManagedLedgerInterceptor interceptor = new ManagedLedgerInterceptorImpl(getBrokerEntryMetadataInterceptors(),null);
+        int numberOfEntries = 4;
+        String ledgerAndCursorName = "my_test_trimmer_ledger";
+
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setMaxEntriesPerLedger(1);
+        config.setRetentionTime(1, TimeUnit.SECONDS);
+        config.setManagedLedgerInterceptor(interceptor);
+        ManagedLedger ledger = factory.open(ledgerAndCursorName, config);
+        ManagedCursor cursor = ledger.openCursor("c1");
+
+        assertEquals(ledger.getNumberOfEntries(), 0);
+
+        for (int i = 0; i < numberOfEntries; i++) {
+            ledger.addEntry(("entry-" + i).getBytes(StandardCharsets.UTF_8), 1);
+        }
+        assertEquals(ledger.getNumberOfEntries(), 4);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex(), 0);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex(), 3);
+
+        List<Entry> entryList = cursor.readEntries(numberOfEntries);
+        for (int i = 0 ; i < numberOfEntries; i ++) {
+            BrokerEntryMetadata metadata =
+                    Commands.parseBrokerEntryMetadataIfExist(entryList.get(i).getDataBuffer());
+            assertNotNull(metadata);
+            assertEquals(metadata.getIndex(), i);
+        }
+
+        Position lastPosition = entryList.get(entryList.size() - 1).getPosition();
+        entryList.forEach(Entry::release);
+
+        assertEquals(ledger.getNumberOfEntries(), 4);
+
+        cursor.markDelete(lastPosition);
+
+        ManagedLedger finalLedger = ledger;
+        Awaitility.await().until(() -> {
+            log.info("ledger.getNumberOfEntries() = {}", finalLedger.getNumberOfEntries());
+            return finalLedger.getNumberOfEntries() == 1;
+        });
+
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex(), 3);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex(), 3);
+
+        cursor.close();
+        ledger.close();
+        // Re-open ledger
+        ledger = factory.open(ledgerAndCursorName, config);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getStartIndex(), 3);
+        assertEquals(((ManagedLedgerInterceptorImpl) ledger.getManagedLedgerInterceptor()).getIndex(), 3);
+        ledger.close();
+
+        factory.shutdown();
+    }
+
+    @Test
+    public void testDeletionAfterLedgerClosedAndRetention() throws Exception {
+        ManagedLedgerInterceptor interceptor = new ManagedLedgerInterceptorImpl(getBrokerEntryMetadataInterceptors(),null);
+        @Cleanup("shutdown")
+        ManagedLedgerFactory factory = new ManagedLedgerFactoryImpl(metadataStore, bkc);
+        ManagedLedgerConfig config = new ManagedLedgerConfig();
+        config.setRetentionSizeInMB(0);
+        config.setMaxEntriesPerLedger(2);
+        config.setRetentionTime(1, TimeUnit.SECONDS);
+        config.setManagedLedgerInterceptor(interceptor);
+        config.setMaximumRolloverTime(1, TimeUnit.SECONDS);
+
+        ManagedLedgerImpl ml = (ManagedLedgerImpl) factory.open("deletion_after_retention_test_ledger", config);
+        ManagedCursor c1 = ml.openCursor("testCursor1");
+        ManagedCursor c2 = ml.openCursor("testCursor2");
+        ml.addEntry("iamaverylongmessagethatshouldnotberetained".getBytes(), 1);
+        ml.addEntry("iamaverylongmessagethatshouldnotberetained".getBytes(), 1);
+        c1.skipEntries(2, ManagedCursor.IndividualDeletedEntries.Exclude);
+        c2.skipEntries(2, ManagedCursor.IndividualDeletedEntries.Exclude);
+        // let current ledger close
+        Field stateUpdater = ManagedLedgerImpl.class.getDeclaredField("state");
+        stateUpdater.setAccessible(true);
+        stateUpdater.set(ml, ManagedLedgerImpl.State.LedgerOpened);
+        ml.rollCurrentLedgerIfFull();
+        // let retention expire
+        Thread.sleep(1500);
+        // delete the expired ledger
+        CompletableFuture<Object> promise = CompletableFuture.completedFuture(null);
+        ml.trimConsumedLedgersInBackground(promise);
+        promise.get();
+
+        // the closed and expired ledger should be deleted
+        assertTrue(ml.getLedgersInfoAsList().size() <= 1);
+        assertEquals(ml.getTotalSize(), 0);
+        assertEquals(((ManagedLedgerInterceptorImpl) ml.getManagedLedgerInterceptor()).getStartIndex(), 2);
+        assertEquals(((ManagedLedgerInterceptorImpl) ml.getManagedLedgerInterceptor()).getIndex(), 1);
+        ml.close();
+    }
+
     @Test
     public void testMessagePayloadProcessor() throws Exception {
         final String ledgerAndCursorName = "topicEntryWithPayloadProcessed";

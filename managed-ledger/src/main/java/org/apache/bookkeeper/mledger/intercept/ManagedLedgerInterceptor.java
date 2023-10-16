@@ -42,6 +42,23 @@ public interface ManagedLedgerInterceptor {
     OpAddEntry beforeAddEntry(OpAddEntry op, int numberOfMessages);
 
     /**
+     * Check if it has AppendIndexMetadataInterceptor.
+     *
+     * @return Has AppendIndexMetadataInterceptor or not.
+     */
+    default boolean hasAppendIndexMetadataInterceptor() {
+        return false;
+    }
+
+    /**
+     * Intercept when trim ledgers.
+     * @param newStartIndex
+     */
+    default void onTrimLedgers(long newStartIndex) {
+
+    }
+
+    /**
      * Intercept When add entry failed.
      * @param numberOfMessages
      */
