@@ -146,8 +146,7 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
     @Override
     public CompletableFuture<Void> onManagedLedgerLastLedgerInitialize(String name, LedgerHandle lh) {
         CompletableFuture<Void> promise = new CompletableFuture<>();
-        boolean hasAppendIndexMetadataInterceptor = appendIndexMetadataInterceptor != null;
-        if (hasAppendIndexMetadataInterceptor && lh.getLastAddConfirmed() >= 0) {
+        if (this.hasAppendIndexMetadataInterceptor() && lh.getLastAddConfirmed() >= 0) {
             lh.readAsync(lh.getLastAddConfirmed(), lh.getLastAddConfirmed()).whenComplete((entries, ex) -> {
                 if (ex != null) {
                     log.error("[{}] Read last entry error.", name, ex);

@@ -2821,7 +2821,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                 // might throw IllegalArgumentException
                                 final BrokerEntryMetadata brokerEntryMetadata =
                                         Commands.peekBrokerEntryMetadataIfExist(buf);
-                                if (brokerEntryMetadata != null) {
+                                if (brokerEntryMetadata != null && brokerEntryMetadata.hasIndex()) {
                                     long index = brokerEntryMetadata.getIndex();
                                     if (managedLedgerInterceptor != null) {
                                         managedLedgerInterceptor.onTrimLedgers(index + 1);
@@ -2829,7 +2829,6 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
                                 }
                             } catch (IllegalArgumentException | IllegalStateException e) {
                                 // This exception could be thrown by both peekBrokerEntryMetadataIfExist or null check
-                                // TODO: handle the exception?
                                 log.info("[{}] Failed to read brokerEntryMetadata while trimming", name, e);
                             } finally {
                                 entry.release();
