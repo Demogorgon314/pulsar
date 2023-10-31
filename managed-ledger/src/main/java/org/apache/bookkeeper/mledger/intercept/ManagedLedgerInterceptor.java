@@ -19,12 +19,16 @@
 package org.apache.bookkeeper.mledger.intercept;
 
 import io.netty.buffer.ByteBuf;
+
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.common.annotation.InterfaceAudience;
 import org.apache.bookkeeper.common.annotation.InterfaceStability;
+import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.impl.OpAddEntry;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 
 /**
  * Interceptor for ManagedLedger.
@@ -42,20 +46,17 @@ public interface ManagedLedgerInterceptor {
     OpAddEntry beforeAddEntry(OpAddEntry op, int numberOfMessages);
 
     /**
-     * Check if it has AppendIndexMetadataInterceptor.
+     * Intercept when trimming ledgers.
+     * This method will be called after collecting ledgers to delete and before updating ledger Ids.
      *
-     * @return Has AppendIndexMetadataInterceptor or not.
+     * @param name name of ManagedLedger
+     * @param managedLedger the managed ledger.
+     * @param ledgersToDelete ledgers to delete.
      */
-    default boolean hasAppendIndexMetadataInterceptor() {
-        return false;
-    }
-
-    /**
-     * Intercept when trim ledgers.
-     * @param newStartIndex
-     */
-    default void onTrimLedgers(long newStartIndex) {
-
+    default CompletableFuture<Void> onTrimLedgers(String name,
+                                                  ManagedLedgerImpl managedLedger,
+                                                  List<MLDataFormats.ManagedLedgerInfo.LedgerInfo> ledgersToDelete) {
+        return CompletableFuture.completedFuture(null);
     }
 
     /**

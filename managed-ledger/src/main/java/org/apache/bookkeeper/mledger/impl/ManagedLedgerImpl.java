@@ -2809,50 +2809,12 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
     }
 
     private CompletableFuture<Void> onTrimLedgers(List<LedgerInfo> ledgersToDelete) {
-        CompletableFuture<Void> promise = new CompletableFuture<>();
-        if (!ledgersToDelete.isEmpty() && this.hasAppendIndexMetadataInterceptor()) {
-            LedgerInfo ledgerInfo = ledgersToDelete.get(ledgersToDelete.size() - 1);
-            asyncReadEntry(PositionImpl.get(ledgerInfo.getLedgerId(), ledgerInfo.getEntries() - 1),
-                    new ReadEntryCallback() {
-                        @Override
-                        public void readEntryComplete(Entry entry, Object ctx) {
-                            ByteBuf buf = entry.getDataBuffer();
-                            try {
-                                // might throw IllegalArgumentException
-                                final BrokerEntryMetadata brokerEntryMetadata =
-                                        Commands.peekBrokerEntryMetadataIfExist(buf);
-                                if (brokerEntryMetadata != null && brokerEntryMetadata.hasIndex()) {
-                                    long index = brokerEntryMetadata.getIndex();
-                                    if (managedLedgerInterceptor != null) {
-                                        managedLedgerInterceptor.onTrimLedgers(index + 1);
-                                    }
-                                }
-                            } catch (IllegalArgumentException | IllegalStateException e) {
-                                // This exception could be thrown by both peekBrokerEntryMetadataIfExist or null check
-                                log.info("[{}] Failed to read brokerEntryMetadata while trimming", name, e);
-                            } finally {
-                                entry.release();
-                                promise.complete(null);
-                            }
-                        }
-
-                        @Override
-                        public void readEntryFailed(ManagedLedgerException exception, Object ctx) {
-                            log.warn("[{}] Failed to read last entry of ledger {} while trimming", name,
-                                    ledgerInfo.getLedgerId(), exception);
-                            promise.complete(null);
-                        }
-                    }, null);
-        } else {
-            promise.complete(null);
+        if (managedLedgerInterceptor != null) {
+            return managedLedgerInterceptor.onTrimLedgers(name, this, ledgersToDelete);
         }
-        return promise;
+        return CompletableFuture.completedFuture(null);
     }
 
-    private boolean hasAppendIndexMetadataInterceptor() {
-        return this.getManagedLedgerInterceptor() != null
-                && this.getManagedLedgerInterceptor().hasAppendIndexMetadataInterceptor();
-    }
 
     /**
      * @param ledgerId the ledger handle which maybe will be released.

@@ -20,13 +20,21 @@ package org.apache.pulsar.broker.intercept;
 
 import io.netty.buffer.ByteBuf;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.client.api.LedgerEntry;
+import org.apache.bookkeeper.mledger.AsyncCallbacks;
+import org.apache.bookkeeper.mledger.Entry;
+import org.apache.bookkeeper.mledger.ManagedLedger;
+import org.apache.bookkeeper.mledger.ManagedLedgerException;
+import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.bookkeeper.mledger.impl.OpAddEntry;
+import org.apache.bookkeeper.mledger.impl.PositionImpl;
 import org.apache.bookkeeper.mledger.intercept.ManagedLedgerInterceptor;
+import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 import org.apache.pulsar.common.intercept.AppendIndexMetadataInterceptor;
@@ -96,11 +104,6 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
     }
 
     @Override
-    public boolean hasAppendIndexMetadataInterceptor() {
-        return appendIndexMetadataInterceptor != null;
-    }
-
-    @Override
     public OpAddEntry beforeAddEntry(OpAddEntry op, int numberOfMessages) {
        if (op == null || numberOfMessages <= 0) {
            return op;
@@ -110,10 +113,48 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
     }
 
     @Override
-    public void onTrimLedgers(long startIndex) {
-        if (appendIndexMetadataInterceptor != null) {
-            appendIndexMetadataInterceptor.setStartIndex(startIndex);
+    public CompletableFuture<Void> onTrimLedgers(String name,
+                                                 ManagedLedgerImpl managedLedger,
+                                                 List<MLDataFormats.ManagedLedgerInfo.LedgerInfo> ledgersToDelete) {
+        if (appendIndexMetadataInterceptor == null) {
+            return CompletableFuture.completedFuture(null);
         }
+        CompletableFuture<Void> promise = new CompletableFuture<>();
+        if (!ledgersToDelete.isEmpty()) {
+            MLDataFormats.ManagedLedgerInfo.LedgerInfo ledgerInfo = ledgersToDelete.get(ledgersToDelete.size() - 1);
+            managedLedger.asyncReadEntry(PositionImpl.get(ledgerInfo.getLedgerId(), ledgerInfo.getEntries() - 1),
+                    new AsyncCallbacks.ReadEntryCallback() {
+                        @Override
+                        public void readEntryComplete(Entry entry, Object ctx) {
+                            ByteBuf buf = entry.getDataBuffer();
+                            try {
+                                // might throw IllegalArgumentException
+                                final BrokerEntryMetadata brokerEntryMetadata =
+                                        Commands.peekBrokerEntryMetadataIfExist(buf);
+                                if (brokerEntryMetadata != null && brokerEntryMetadata.hasIndex()) {
+                                    long index = brokerEntryMetadata.getIndex();
+                                    appendIndexMetadataInterceptor.setStartIndex(index + 1);
+                                }
+                            } catch (IllegalArgumentException | IllegalStateException e) {
+                                // This exception could be thrown by both peekBrokerEntryMetadataIfExist or null check
+                                log.info("[{}] Failed to read brokerEntryMetadata while trimming", name, e);
+                            } finally {
+                                entry.release();
+                                promise.complete(null);
+                            }
+                        }
+
+                        @Override
+                        public void readEntryFailed(ManagedLedgerException exception, Object ctx) {
+                            log.warn("[{}] Failed to read last entry of ledger {} while trimming", name,
+                                    ledgerInfo.getLedgerId(), exception);
+                            promise.complete(null);
+                        }
+                    }, null);
+        } else {
+            promise.complete(null);
+        }
+        return promise;
     }
 
     @Override
@@ -146,7 +187,7 @@ public class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
     @Override
     public CompletableFuture<Void> onManagedLedgerLastLedgerInitialize(String name, LedgerHandle lh) {
         CompletableFuture<Void> promise = new CompletableFuture<>();
-        if (this.hasAppendIndexMetadataInterceptor() && lh.getLastAddConfirmed() >= 0) {
+        if (this.appendIndexMetadataInterceptor != null && lh.getLastAddConfirmed() >= 0) {
             lh.readAsync(lh.getLastAddConfirmed(), lh.getLastAddConfirmed()).whenComplete((entries, ex) -> {
                 if (ex != null) {
                     log.error("[{}] Read last entry error.", name, ex);
