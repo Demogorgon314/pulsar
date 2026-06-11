@@ -20,6 +20,7 @@ package org.apache.pulsar.compaction;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -75,5 +76,31 @@ public class CompactedTopicUtilsTest {
         Assert.assertTrue(entries.isEmpty());
         Assert.assertNull(throwableRef.get());
         Assert.assertEquals(readPositionRef.get(), lastCompactedPosition.getNext());
+    }
+
+    /**
+     * A failed compacted read must propagate so the dispatcher retries from the same position. The cursor
+     * must not be moved: seeking it past the compacted range on a failed read would silently skip the
+     * remaining compacted entries.
+     */
+    @Test
+    public void testReadCompactedEntriesFailureDoesNotSeekCursor() {
+        Position lastCompactedPosition = PositionFactory.create(1, 100);
+        TopicCompactionService service = Mockito.mock(TopicCompactionService.class);
+        Mockito.doReturn(CompletableFuture.completedFuture(lastCompactedPosition)).when(service)
+                .getLastCompactedPosition();
+        Mockito.doReturn(CompletableFuture.failedFuture(new NoSuchElementException("No such entry 1 in ledger 7")))
+                .when(service).readCompactedEntries(Mockito.any(), Mockito.intThat(argument -> argument > 0));
+
+        ManagedCursorImpl cursor = Mockito.mock(ManagedCursorImpl.class);
+        Mockito.doReturn(PositionFactory.create(1, 50)).when(cursor).getReadPosition();
+        Mockito.doReturn(1).when(cursor).applyMaxSizeCap(Mockito.anyInt(), Mockito.anyLong());
+
+        final var future = CompactedTopicUtils.asyncReadCompactedEntries(service, cursor, 1, 100,
+                PositionFactory.LATEST, false, false);
+        ExecutionException e = Assert.expectThrows(ExecutionException.class, future::get);
+        Assert.assertTrue(e.getCause() instanceof NoSuchElementException);
+        Mockito.verify(cursor, Mockito.never()).seek(Mockito.any());
+        Mockito.verify(cursor, Mockito.never()).seek(Mockito.any(), Mockito.anyBoolean());
     }
 }

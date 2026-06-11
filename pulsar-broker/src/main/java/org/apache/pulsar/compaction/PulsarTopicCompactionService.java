@@ -26,7 +26,6 @@ import io.netty.buffer.ByteBuf;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -90,12 +89,11 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
                     if (ex == null) {
                         resultFuture.complete(result);
                     } else {
-                        ex = FutureUtil.unwrapCompletionException(ex);
-                        if (ex instanceof NoSuchElementException) {
-                            resultFuture.complete(Collections.emptyList());
-                        } else {
-                            resultFuture.completeExceptionally(ex);
-                        }
+                        // Don't convert failures into an empty result: callers treat an empty result as
+                        // "no compacted entries at or after startPosition" and seek the cursor past the
+                        // compacted range (see CompactedTopicUtils#asyncReadCompactedEntries), which would
+                        // silently skip the remaining compacted entries instead of retrying the read.
+                        resultFuture.completeExceptionally(FutureUtil.unwrapCompletionException(ex));
                     }
                 });
 
